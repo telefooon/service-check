@@ -1,42 +1,60 @@
 # Service Check
 
-A small Python command-line tool that checks whether a web service can be reached. It uses the Python 3 standard library and runs on Windows and Linux.
+Service Check is a Python CLI for finding where a web request fails. It resolves the hostname, connects to the port, validates TLS for HTTPS, and checks the HTTP response status. Run it once or watch several services and log outages to CSV.
 
-## Run the demo
+Requires Python 3.10 or later. Uses only the standard library.
 
-Open two terminals in the project directory. In the first terminal, start a local HTTP server.
+## Run the local demo
+
+Extract the project and open three terminals in the folder containing `service_check.py`. On Windows you can use `py` in place of `python`.
+
+In terminal 1, start the frontend.
 
 ```sh
-python -m http.server 8000 --bind 127.0.0.1
+python -m http.server 8000 --bind 127.0.0.1 --directory demo/frontend
 ```
 
-Run these commands in the second terminal. On Linux, use `python3` if `python` is unavailable.
+In terminal 2, start the mock backend. It serves a small file at `/health`.
+
+```sh
+python -m http.server 8001 --bind 127.0.0.1 --directory demo/backend
+```
+
+In terminal 3, start the monitor.
+
+```sh
+python service_check.py --config services.example.json --watch 5 --csv history.csv
+```
+
+Both services should show UP. Press Ctrl+C in terminal 2. On the next check the backend should show DOWN with a TCP failure while the frontend stays UP. Restart terminal 2's command to see recovery and the time between the first failed check and the first successful one. Ctrl+C in terminal 3 stops monitoring.
+
+## Check one URL
 
 ```sh
 python service_check.py http://localhost:8000/
-python service_check.py http://localhost:8000/missing
+python service_check.py http://localhost:8001/missing --expect 200
+python service_check.py https://example.com/ --timeout 5
 ```
 
-The first command should resolve localhost, connect to port 8000, and show HTTP 200. The second should connect successfully and show HTTP 404 because the requested path is missing.
+With the demo running, the second command reaches the backend and receives a 404. Its failed stage is HTTP. The third command exercises TLS and requires internet access. To demonstrate a TLS handshake failure locally, run `python service_check.py https://localhost:8000/` against the plain HTTP frontend. For a certificate failure, use an HTTPS service with an expired or untrusted certificate. TCP can pass while TLS reports the verification error and HTTP is skipped.
 
-Press Ctrl+C in the first terminal and repeat the first command. Name resolution should still succeed, but the TCP connection should now fail because the server stopped listening.
-
-## What each check tells you
-
-| Check | What it tests |
+| Stage | What the result measures |
 |---|---|
-| DNS | Can the operating system resolve the hostname to an IP address? Local names can also come from the hosts file. |
-| TCP | Can this machine establish a connection to the target port? |
-| HTTP | Does the service respond to a GET request, and what status does it return? HTTPS requests also verify the server certificate. |
+| DNS | Operating system name resolution, including cached or local names such as localhost |
+| TCP | Time to connect to a resolved address on the requested port |
+| TLS | HTTPS handshake and certificate validation against the hostname and trusted authorities. A pass shows TLS version, UTC expiry date, and whole days left |
+| HTTP | Time to send GET and receive response headers over the established connection. The checker reports redirects directly |
 
-The HTTP request opens its own connection. Exit status 0 means the service returned a 2xx or 3xx response. Redirects are reported as received. Exit status 1 means a check failed or the response fell outside that range.
+## CLI options
 
-## Interview practice
+| Option | Behavior |
+|---|---|
+| `URL` or `--config FILE` | Check one URL or a JSON array of services. Each entry needs a unique name and URL. See `services.example.json` |
+| `--expect CODE` | Require a specific response code. Default accepts 200 through 399 |
+| `--timeout SECONDS` | TCP connect budget and socket operation timeout, default 3 seconds. DNS timing follows the system resolver |
+| `--watch SECONDS` | Check services in order, then wait this many seconds before starting the next round |
+| `--csv FILE` | Append one row per service check, including UTC time, state, failed stage, HTTP status, state changes, and stage timings |
 
-- Explain why stopping the server leaves name resolution working.
-- Explain why HTTP 404 proves the server responded and where you would look next.
-- Explain why a connection timeout gives you several leads, such as routing, firewall rules, or an unavailable host.
+Config entries can override the CLI defaults with `expect` and `timeout`. An initial check establishes the observed state. Subsequent changes print `UP -> DOWN` or `DOWN -> UP`. Outage timing starts at the first failed observation in the current run. Short outages between checks can go undetected.
 
-Based on the local demo, a resume bullet you can use after you run and understand the checks is:
-
-> Built a Python CLI to diagnose web service reachability with DNS, TCP port, and HTTP status checks. Tested successful responses, missing routes, and stopped services.
+One-time checks exit with 0 when all services pass or 1 when any service fails. Invalid arguments or configuration exit with 2. Interrupting watch mode exits with 130.

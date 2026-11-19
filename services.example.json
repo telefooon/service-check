@@ -1,0 +1,4 @@
+[
+  {"name": "frontend", "url": "http://localhost:8000/", "expect": 200, "timeout": 3},
+  {"name": "backend", "url": "http://localhost:8001/health", "expect": 200, "timeout": 3}
+]
